@@ -226,6 +226,16 @@ def test_turns_are_bounded_by_steps_plus_repairs(toolbox, dictionary):
     assert result.turns == 3 + 2 + 1  # max_steps + max_repairs + final answer
 
 
+def test_no_stale_ungrounded_figures_when_stopped_by_budget(toolbox, dictionary):
+    # Rejected answer, then the model asks for a tool with the budget spent:
+    # no answer is returned, so no figures should be reported against it.
+    script = [{"tool": "describe_data"}, "There are 650 orders.", {"tool": "describe_data"}]
+    agent, _ = make_agent(script, toolbox, dictionary, max_steps=1)
+    result = agent.run("How many orders?")
+    assert result.stopped_reason == "step_budget" and result.answer is None
+    assert result.repairs == 1 and result.ungrounded == []
+
+
 def test_max_repairs_must_not_be_negative(toolbox, dictionary):
     with pytest.raises(ValueError):
         Agent(MockLLM([]), toolbox, dictionary, max_repairs=-1)

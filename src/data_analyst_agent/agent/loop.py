@@ -136,7 +136,7 @@ class Agent:
                 # Figures from the question are allowed, as in the eval: a
                 # user's own "more than 500" is not an invented number.
                 sources = [s.result for s in result.steps if s.ok]
-                result.ungrounded = ungrounded_numbers(response.text, sources, question)
+                unsupported = ungrounded_numbers(response.text, sources, question)
 
                 # Correction turns are capped by max_repairs, not max_steps:
                 # max_steps limits tool use, and a correction is a text turn.
@@ -144,17 +144,19 @@ class Agent:
                 # runs a tool (at most max_steps) or uses a repair (at most
                 # max_repairs), so a run takes at most max_steps + max_repairs
                 # + 1 turns.
-                if result.ungrounded and result.repairs < self.max_repairs:
+                if unsupported and result.repairs < self.max_repairs:
                     result.repairs += 1
-                    messages.append(self.llm.user_message(_correction_message(result.ungrounded)))
+                    messages.append(self.llm.user_message(_correction_message(unsupported)))
                     continue
 
                 # An answer that still has unsupported figures after the last
                 # correction is not reported as answered: callers and the eval
                 # must be able to tell it apart. The text is kept so the caller
-                # can see what was rejected.
+                # can see what was rejected. `ungrounded` is only set here, so it
+                # always describes the returned answer, never a rejected one.
                 result.answer = response.text
-                result.stopped_reason = "ungrounded" if result.ungrounded else "answered"
+                result.ungrounded = unsupported
+                result.stopped_reason = "ungrounded" if unsupported else "answered"
                 return result
 
             # After the budget is used up the model still gets one more turn to

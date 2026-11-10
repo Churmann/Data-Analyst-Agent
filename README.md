@@ -211,7 +211,7 @@ Item kinds:
 
 ```bash
 pip install -r requirements-dev.txt
-pytest          # 158 tests, about 6 seconds, no network or API key needed
+pytest          # 159 tests, about 6 seconds, no network or API key needed
 mypy            # strict type check of src/, evals/, scripts/ and run.py
 ```
 
