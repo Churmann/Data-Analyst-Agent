@@ -15,7 +15,7 @@ rows: 600  max steps: 12
     {"rows": 600, "columns": [{"name": "order_id", "dtype": "object", ...
 [2] aggregate({"group_by": ["region"], "value": "revenue", "agg": "mean"}) -> ok
     {"group_by": ["region"], "value": "revenue", "agg": "mean", "missing_values_skipped": 24, ...
-stopped: answered after 2 step(s), 3 turn(s); retrieved columns: ['region', 'revenue']; usage: {...}
+stopped: answered after 2 step(s), 3 turn(s), 0 correction(s); retrieved columns: ['region', 'revenue']; usage: {...}
 
 East has the highest mean revenue: 562.67 per order (n=144).
 ```
@@ -31,9 +31,9 @@ model.
 | Pattern | Where | What it does here |
 |---|---|---|
 | **Tool calling** | `tools/toolbox.py` | Six pandas/scipy tools, each with a JSON schema passed to the model through native tool use. Arguments are checked against the schema before anything runs. |
-| **Grounding and retrieval** | `retrieval.py`, `prompts/system.py` | The data dictionary is searched for the columns that match the question (keyword overlap), and their notes go into the system prompt. The prompt requires every number to come from a tool result. |
+| **Grounding and retrieval** | `retrieval.py`, `prompts/system.py` | The data dictionary is searched for the columns that match the question (keyword overlap), and their notes go into the system prompt. The prompt requires every number to come from a tool result, and `grounding.py` checks the final answer against the tool results before it is returned. |
 | **Orchestration loop with memory** | `agent/loop.py` | Plan → act → observe until the model answers. The message history is the agent's working memory: it only grows, so the model always sees every call it made and every result it got. |
-| **Failure handling** | `tools/toolbox.py`, `agent/loop.py`, `llm/anthropic_llm.py` | Bad tool input becomes a structured error the model can read and correct. A crashing tool is caught, not fatal. A step budget guarantees the run ends. A refused or truncated model turn never runs tools. |
+| **Failure handling** | `tools/toolbox.py`, `agent/loop.py`, `llm/anthropic_llm.py` | Bad tool input becomes a structured error the model can read and correct. A crashing tool is caught, not fatal. An answer with unsupported figures is sent back once for correction. Step and repair budgets guarantee the run ends. A refused or truncated model turn never runs tools. |
 | **Evaluation** | `evals/` | 19 questions with known answers, out-of-scope questions and ambiguous ones. The scorer checks figures, refusals and clarifications, and fails any answer whose numbers were not in a tool result. |
 
 ---
@@ -51,13 +51,17 @@ flowchart TD
         L[LLM turn<br/>history + tool schemas] -->|tool calls| X[Execute tools<br/>Toolbox.run]
         X -->|tool_result or structured error| H[(Message history)]
         H --> L
-        L -->|plain text| A[Final answer]
+        L -->|plain text| G{Grounding check<br/>figures in tool results?}
+        G -->|yes| A[Final answer]
+        G -->|no, repairs left| C[Correction message] --> H
+        G -->|no, none left| U[Stop: ungrounded]
         X -.->|step budget spent| S[Stop: step_budget]
     end
 
     CSV[(sales.csv)] --> X
     A --> RES[AgentResult<br/>answer, steps, stopped_reason, usage]
     S --> RES
+    U --> RES
     RES --> E[Eval scorer<br/>figures, grounding, refusals]
 ```
 
@@ -78,7 +82,11 @@ The three parts are kept separate:
 1. Send the system prompt, the full history and the tool schemas to the model.
 2. Append the assistant turn to the history **unchanged**. This keeps the model's
    thinking blocks valid across turns.
-3. If the model answered in text, stop with `answered`.
+3. If the model answered in text, check every figure in it against the results
+   of the successful steps (figures from the question are allowed). If all
+   match, stop with `answered`. If some don't and a correction is left
+   (`max_repairs`, default 1), send a message naming them and go back to step 1.
+   Otherwise stop with `ungrounded`, keeping the answer text.
 4. Otherwise run each requested tool. Record a `Step` (tool, arguments, ok,
    result or error) and send all results back in one `tool_result` message.
 5. Once `max_steps` tool calls have run, the model gets one more turn to answer
@@ -92,6 +100,7 @@ data-analyst-agent/
 ├── src/data_analyst_agent/
 │   ├── tools/toolbox.py          Toolbox, ToolError, tool schemas
 │   ├── retrieval.py              data dictionary loading + keyword retrieval
+│   ├── grounding.py              number extraction + grounding check (used at runtime and by evals)
 │   ├── prompts/system.py         system prompt: rules, schema, column notes
 │   ├── llm/
 │   │   ├── base.py               LLM interface, LLMResponse, ToolCall, ToolResult
@@ -166,7 +175,8 @@ python run.py --question "Is mean revenue different between North and South?" --
 | `--verbose`, `-v` | off | print each step to stderr |
 | `--json` | off | print the full `AgentResult` (every step) as JSON |
 
-Exit codes: `0` answered, `2` stopped by the step budget or a refusal, `1`
+Exit codes: `0` answered, `2` stopped by the step budget, a refusal, or an
+answer with unsupported figures (printed with a warning), `1`
 error (missing file, no credentials, API failure).
 
 To use your own data, write a data dictionary in the same format as
@@ -201,7 +211,7 @@ Item kinds:
 
 ```bash
 pip install -r requirements-dev.txt
-pytest          # 149 tests, about 6 seconds, no network or API key needed
+pytest          # 158 tests, about 6 seconds, no network or API key needed
 mypy            # strict type check of src/, evals/, scripts/ and run.py
 ```
 
@@ -211,7 +221,7 @@ mypy            # strict type check of src/, evals/, scripts/ and run.py
 | `test_toolbox.py` | every tool on good input, checked against hand-worked values and scipy; `ToolError` for unknown tools, columns, arguments, wrong types and out-of-range values |
 | `test_llm.py` | `MockLLM` scripting; `AnthropicLLM` request parameters and response handling, using a fake client |
 | `test_retrieval_and_prompts.py` | retrieval ranking, plural handling; prompt contains rules, schema and notes |
-| `test_agent.py` | the full loop with `MockLLM`: which tools run and in what order, results matched to calls, recovery from a tool error, a crashing tool, the step budget stopping a model that never answers, refusals, the CLI |
+| `test_agent.py` | the full loop with `MockLLM`: which tools run and in what order, results matched to calls, recovery from a tool error, a crashing tool, the step budget stopping a model that never answers, refusals, the runtime grounding check (correction, still wrong, question figures, turn bound), the CLI |
 | `test_scoring.py` | number extraction, tolerance matching, refusal and clarification detection, grounding, item scoring |
 | `test_eval_harness.py` | every expected value in the eval set is checked against the real data; a perfect scripted agent scores 100%; a mixed run produces the right scorecard |
 
@@ -228,9 +238,10 @@ are the same with or without them. Rebuild it with
 
 ## Limitations
 
-- **Grounding is enforced by the prompt and checked by the eval, not enforced
-  at runtime.** Nothing stops the model from writing a number that no tool
-  produced. The eval would catch it, but a live answer would still contain it.
+- **The grounding check matches values, not meaning.** A figure passes if it
+  matches *any* tool result, so "West: 562.67" passes when 562.67 is East's
+  mean. Small integers can match by coincidence, and numbers written as words
+  ("six hundred") are not checked.
 - **No arithmetic or filtering tool.** The agent cannot compute a difference,
   ratio or percentage, and the prompt tells it to say so rather than do the
   arithmetic itself. It also cannot filter rows ("orders with units > 10")
@@ -253,16 +264,13 @@ are the same with or without them. Rebuild it with
 
 ## Roadmap
 
-1. **Runtime grounding check:** before returning an answer, run the same
-   check the scorer uses. If it finds unsupported figures, send them back to the
-   model to fix or remove.
-2. **`compute` and `filter` tools:** safe arithmetic on figures from earlier
+1. **`compute` and `filter` tools:** safe arithmetic on figures from earlier
    results, and row filters, so derived and conditional questions can be answered
    without breaking the grounding rule.
-3. **Prompt caching** on the stable system block and tool schemas, to cut cost
+2. **Prompt caching** on the stable system block and tool schemas, to cut cost
    per turn.
-4. **Eval baseline in CI:** record a live scorecard, then fail a PR whose
+3. **Eval baseline in CI:** record a live scorecard, then fail a PR whose
    pass rate or grounding drops.
-5. **Better retrieval:** synonyms in the data dictionary first, embeddings
+4. **Better retrieval:** synonyms in the data dictionary first, embeddings
    if that isn't enough.
-6. **SQL backend (DuckDB)** for multiple tables and larger files.
+5. **SQL backend (DuckDB)** for multiple tables and larger files.

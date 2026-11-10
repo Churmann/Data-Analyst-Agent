@@ -142,6 +142,95 @@ def test_on_step_callback_and_json(toolbox, dictionary):
     assert data["stopped_reason"] == "answered" and data["steps"][0]["result"]["rows"] == 600
 
 
+# -- runtime grounding check ---------------------------------------------------- #
+
+
+def last_user_text(messages):
+    content = messages[-1]["content"]
+    assert messages[-1]["role"] == "user" and isinstance(content, str)
+    return content
+
+
+def test_ungrounded_answer_is_corrected(toolbox, dictionary):
+    seen_correction = []
+
+    def corrected(messages):
+        seen_correction.append(last_user_text(messages))
+        return "There are 600 orders."
+
+    agent, llm = make_agent(
+        [{"tool": "describe_data"}, "There are 650 orders.", corrected], toolbox, dictionary
+    )
+    result = agent.run("How many orders are there?")
+
+    assert result.answer == "There are 600 orders."
+    assert result.stopped_reason == "answered"
+    assert result.repairs == 1 and result.ungrounded == []
+    assert result.turns == 3 and len(result.steps) == 1  # the correction did not use a tool step
+    # The model was told exactly which figure had no support.
+    assert "650" in seen_correction[0]
+    # The rejected answer stays in the history, followed by the correction.
+    history = llm.calls[-1]["messages"]
+    assert history[-2]["content"] == [{"type": "text", "text": "There are 650 orders."}]
+
+
+def test_still_ungrounded_after_correction(toolbox, dictionary):
+    agent, llm = make_agent(
+        [{"tool": "describe_data"}, "There are 650 orders.", "There are 640 orders."], toolbox, dictionary
+    )
+    result = agent.run("How many orders are there?")
+
+    assert result.stopped_reason == "ungrounded"
+    assert result.answer == "There are 640 orders."  # kept so the caller can see what was rejected
+    assert result.ungrounded == ["640"] and result.repairs == 1
+    assert llm.remaining == 0  # no extra turn after the last allowed correction
+
+
+def test_grounded_first_answer_needs_no_correction(toolbox, dictionary):
+    agent, llm = make_agent([{"tool": "describe_data"}, "There are 600 orders."], toolbox, dictionary)
+    result = agent.run("How many orders are there?")
+    assert result.stopped_reason == "answered"
+    assert result.turns == 2 and result.repairs == 0 and result.ungrounded == []
+
+
+def test_numbers_from_the_question_are_allowed(toolbox, dictionary):
+    agent, _ = make_agent(
+        [{"tool": "describe_data"}, "Yes: 600 orders, which is more than 500."], toolbox, dictionary
+    )
+    result = agent.run("Are there more than 500 orders?")
+    assert result.stopped_reason == "answered" and result.repairs == 0
+
+
+def test_failed_steps_do_not_ground_figures(toolbox, dictionary):
+    # The bad call's error text is not a source; only successful results count.
+    agent, _ = make_agent(
+        [{"tool": "column_stats", "input": {"column": "sales"}}, "Mean sales are 455.33."],
+        toolbox, dictionary, max_repairs=0,
+    )
+    result = agent.run("Average sales?")
+    assert result.stopped_reason == "ungrounded" and result.ungrounded == ["455.33"]
+
+
+def test_max_repairs_zero_reports_immediately(toolbox, dictionary):
+    agent, llm = make_agent([{"tool": "describe_data"}, "There are 650 orders."], toolbox, dictionary, max_repairs=0)
+    result = agent.run("How many orders?")
+    assert result.stopped_reason == "ungrounded" and result.repairs == 0 and result.turns == 2
+
+
+def test_turns_are_bounded_by_steps_plus_repairs(toolbox, dictionary):
+    # Worst case: uses every tool step, then keeps answering with invented figures.
+    script = [{"tool": "describe_data"}] * 3 + ["650 orders."] * 10
+    agent, _ = make_agent(script, toolbox, dictionary, max_steps=3, max_repairs=2)
+    result = agent.run("How many orders?")
+    assert result.stopped_reason == "ungrounded"
+    assert result.turns == 3 + 2 + 1  # max_steps + max_repairs + final answer
+
+
+def test_max_repairs_must_not_be_negative(toolbox, dictionary):
+    with pytest.raises(ValueError):
+        Agent(MockLLM([]), toolbox, dictionary, max_repairs=-1)
+
+
 class RefusingLLM(MockLLM):
     def complete(self, system, messages, tools):
         return LLMResponse(text="", raw_content=[], stop_reason="refusal")
@@ -174,6 +263,14 @@ def test_cli_json_and_budget_exit_code(tmp_path, capsys):
     code = main(["-q", "x", "--max-steps", "1", "--json", "--output-dir", str(tmp_path)], llm=llm)
     out, _ = capsys.readouterr()
     assert code == 2 and json.loads(out)["stopped_reason"] == "step_budget"
+
+
+def test_cli_warns_on_ungrounded_answer(tmp_path, capsys):
+    llm = MockLLM([{"tool": "describe_data"}, "There are 650 orders.", "There are 640 orders."])
+    code = main(["-q", "How many orders?", "--output-dir", str(tmp_path)], llm=llm)
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "There are 640 orders." in out and "do not match any tool result: 640" in out
 
 
 def test_cli_missing_csv(tmp_path, capsys):

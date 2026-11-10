@@ -60,6 +60,9 @@ def print_result(result: AgentResult) -> None:
         print(f"\n(Stopped: step budget of {len(result.steps)} tool calls used up before an answer.)")
     elif result.stopped_reason == "refused":
         print("\n(Stopped: the model declined this request.)")
+    elif result.stopped_reason == "ungrounded":
+        figures = ", ".join(result.ungrounded)
+        print(f"\n(Warning: these figures do not match any tool result: {figures}. Do not rely on them.)")
 
 
 def main(argv: Sequence[str] | None = None, llm: LLM | None = None) -> int:
@@ -90,7 +93,8 @@ def main(argv: Sequence[str] | None = None, llm: LLM | None = None) -> int:
 
     if args.verbose:
         print(
-            f"stopped: {result.stopped_reason} after {len(result.steps)} step(s), {result.turns} turn(s); "
+            f"stopped: {result.stopped_reason} after {len(result.steps)} step(s), {result.turns} turn(s), "
+            f"{result.repairs} correction(s); "
             f"retrieved columns: {result.retrieved_columns}; usage: {result.usage}\n",
             file=sys.stderr,
         )

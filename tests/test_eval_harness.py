@@ -85,7 +85,8 @@ def test_harness_scores_refusal_clarify_and_failures(tmp_path, capsys):
     scripts = {
         "profit_margin": ["There is no cost column, so profit margin cannot be calculated."],
         "best_region": ["Best by which measure: mean revenue, total revenue or units?"],
-        "row_count": [{"tool": "describe_data"}, "There are 650 orders."],  # wrong + ungrounded
+        # wrong + ungrounded, and still wrong after the runtime correction
+        "row_count": [{"tool": "describe_data"}, "There are 650 orders.", "There are 640 orders."],
         "total_units": [{"tool": "describe_data"}] * 5,  # never answers
     }
     out_json = tmp_path / "eval.json"
@@ -96,7 +97,8 @@ def test_harness_scores_refusal_clarify_and_failures(tmp_path, capsys):
     out = capsys.readouterr().out
     assert code == 1
     assert "passed 2/4 (50%)" in out
-    assert "ungrounded numbers: ['650']" in out and "stopped: step_budget" in out
+    assert "stopped: ungrounded" in out and "ungrounded numbers: ['640']" in out
+    assert "stopped: step_budget" in out
 
     data = json.loads(out_json.read_text())
     assert data["summary"]["by_kind"]["refuse"] == {"total": 1, "passed": 1}
