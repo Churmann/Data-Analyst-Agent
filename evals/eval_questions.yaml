@@ -1,0 +1,120 @@
+# Evaluation set for the data analyst agent on data/sales.csv.
+#
+# kind: answer   the answer must contain every expect_numbers value (within
+#                tolerance) and every expect_substrings string (case-insensitive)
+# kind: refuse   the question cannot be answered from the data; the agent must
+#                say so and must not report figures
+# kind: clarify  the question is ambiguous; the agent must ask what is meant
+#
+# Expected values come from the dataset's construction (see
+# scripts/generate_sample_data.py and tests/test_sample_data.py).
+
+items:
+  # -- answerable ---------------------------------------------------------- #
+  - id: row_count
+    kind: answer
+    question: How many orders are in the dataset?
+    expect_numbers:
+      - {value: 600, tolerance: 0}
+
+  - id: missing_revenue
+    kind: answer
+    question: How many orders are missing a revenue value?
+    expect_numbers:
+      - {value: 24, tolerance: 0}
+
+  - id: overall_mean_revenue
+    kind: answer
+    question: What is the average revenue per order?
+    expect_numbers:
+      - {value: 455.33, tolerance: 0.5}
+
+  - id: top_region_by_mean_revenue
+    kind: answer
+    question: Which region has the highest mean revenue per order, and what is it?
+    expect_substrings: [East]
+    expect_numbers:
+      - {value: 562.67, tolerance: 0.5}
+
+  - id: corporate_mean_revenue
+    kind: answer
+    question: What is the mean order revenue for the Corporate segment?
+    expect_numbers:
+      - {value: 730, tolerance: 0.5}
+
+  - id: mean_units_by_segment
+    kind: answer
+    question: What is the average number of units per order in each segment?
+    expect_substrings: [Consumer, Corporate, SMB]
+    expect_numbers:
+      - {value: 9.75, tolerance: 0.05}
+      - {value: 17.25, tolerance: 0.05}
+      - {value: 12.5, tolerance: 0.05}
+
+  - id: total_units
+    kind: answer
+    question: How many units were sold in total?
+    expect_numbers:
+      - {value: 7900, tolerance: 0}
+
+  - id: total_recorded_revenue
+    kind: answer
+    question: What is the total recorded revenue, ignoring orders with missing revenue?
+    expect_numbers:
+      - {value: 262272, tolerance: 1}
+
+  - id: median_revenue
+    kind: answer
+    question: What is the median order revenue?
+    expect_numbers:
+      - {value: 403, tolerance: 0.5}
+
+  - id: units_revenue_correlation
+    kind: answer
+    question: How strongly are units and revenue correlated (Pearson)?
+    expect_numbers:
+      - {value: 0.942, tolerance: 0.005}
+
+  - id: north_vs_south_welch
+    kind: answer
+    question: >
+      Is mean revenue different between North and South? Use a Welch t-test and
+      report the t statistic.
+    expect_numbers:
+      - {value: 3.87, tolerance: 0.01}
+
+  - id: south_orders
+    kind: answer
+    question: How many orders came from the South region?
+    expect_numbers:
+      - {value: 150, tolerance: 0}
+
+  # -- out of scope: should decline --------------------------------------- #
+  - id: profit_margin
+    kind: refuse
+    question: What is the profit margin for each region?
+
+  - id: monthly_trend
+    kind: refuse
+    question: How did revenue change month over month last year?
+
+  - id: forecast
+    kind: refuse
+    question: Forecast next quarter's revenue for the East region.
+
+  - id: customer_names
+    kind: refuse
+    question: Which customer placed the largest order?
+
+  - id: outside_fact
+    kind: refuse
+    question: What was the US inflation rate in 2024?
+
+  # -- ambiguous: should ask ---------------------------------------------- #
+  - id: best_region
+    kind: clarify
+    question: Which region is best?
+
+  - id: performance
+    kind: clarify
+    question: How are we doing?

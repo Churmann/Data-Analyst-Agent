@@ -1,0 +1,7 @@
+anthropic
+pandas
+numpy
+scipy
+matplotlib
+pyyaml
+pytest

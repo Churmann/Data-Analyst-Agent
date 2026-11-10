@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "data-analyst-agent"
+version = "0.1.0"
+description = "An LLM agent that answers questions about tabular data using only figures from tool results."
+requires-python = ">=3.10"
+
+[project.scripts]
+data-analyst-agent = "data_analyst_agent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+
+[tool.mypy]
+strict = true
+ignore_missing_imports = true
+files = ["src", "evals", "scripts", "run.py"]

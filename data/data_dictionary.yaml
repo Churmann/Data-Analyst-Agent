@@ -1,0 +1,50 @@
+dataset: sales
+file: data/sales.csv
+description: >
+  Synthetic order-level sales data. One row per order. Generated
+  deterministically by scripts/generate_sample_data.py.
+row_count: 600
+primary_key: order_id
+
+columns:
+  order_id:
+    type: string
+    description: Unique order identifier.
+    format: "ORD-NNNN"
+    nullable: false
+
+  region:
+    type: categorical
+    description: Sales region the order was booked in.
+    allowed_values: [North, South, East, West]
+    nullable: false
+
+  segment:
+    type: categorical
+    description: Customer segment.
+    allowed_values: [Consumer, Corporate, SMB]
+    nullable: false
+
+  units:
+    type: integer
+    description: Number of units in the order.
+    unit: units
+    min: 3
+    nullable: false
+
+  unit_price:
+    type: float
+    description: Price per unit at time of order.
+    unit: USD
+    nullable: false
+
+  revenue:
+    type: float
+    description: Order revenue before tax and discounts.
+    unit: USD
+    nullable: true
+    derivation: revenue = units * unit_price
+    notes: >
+      24 orders have missing revenue. Because revenue is fully determined by
+      units and unit_price, missing values can be reconstructed exactly from
+      those columns rather than imputed.
